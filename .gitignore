@@ -1,0 +1,8 @@
+﻿################################################################################
+# This .gitignore file was automatically created by Microsoft(R) Visual Studio.
+################################################################################
+
+/.idea/.idea.AGP/.idea
+/.vs
+/x64/Debug/AGP.exe
+/x64/Debug/AGP.pdb
