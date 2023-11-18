@@ -5,7 +5,14 @@
       <FullPath>C:\Users\prodi\source\repos\AGP\Win32 Intro\x64\Debug\AGP.exe</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
-  <ContentFiles />
+  <ContentFiles>
+    <ContentFile>
+      <FullPath>C:\Users\prodi\source\repos\AGP\Win32 Intro\Win32 Intro\CompiledShaders\PixelShader.cso</FullPath>
+    </ContentFile>
+    <ContentFile>
+      <FullPath>C:\Users\prodi\source\repos\AGP\Win32 Intro\Win32 Intro\CompiledShaders\VertexShader.cso</FullPath>
+    </ContentFile>
+  </ContentFiles>
   <SatelliteDlls />
   <NonRecipeFileRefs />
 </Project>

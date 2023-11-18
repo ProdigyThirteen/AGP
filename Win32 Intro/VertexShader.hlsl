@@ -1,4 +1,21 @@
-float4 main( float4 pos : SV_Position ) : SV_TARGET
+struct VIn
 {
-    return float4(pos.x / 800, pos.y / 600, 0.0f, 1.0f);
+	float3 position : POSITION;
+	float4 color : COLOR;
+};
+
+struct VOut
+{
+	float4 position : SV_Position;
+	float4 color : COLOR;
+};
+
+VOut main(VIn input)
+{
+	VOut output;
+	
+	output.position = float4(input.position, 1);
+	output.color = input.color;
+	
+	return output;
 }
