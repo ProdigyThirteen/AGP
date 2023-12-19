@@ -28,11 +28,18 @@ ID3D11PixelShader*      pPS          = NULL;
 ID3D11InputLayout*      pLayout      = NULL;
 
 ID3D11Buffer* pVBuffer = NULL;
+ID3D11Buffer* pCBuffer = NULL;
 
 struct Vertex
 {
 	XMFLOAT3 Position;
 	XMFLOAT4 Color;
+};
+
+struct CBUFFER0
+{
+	XMFLOAT3 pos;
+	float padding;
 };
 
 // Forward declarations
@@ -218,10 +225,11 @@ void CleanD3D()
 	if (g_swapChain) g_swapChain->Release();
 	if (g_context)	g_context->Release();
 	if (g_device)	g_device->Release();
+	if (pVBuffer)	pVBuffer->Release();
+	if (pCBuffer)	pCBuffer->Release();
 	if (pLayout)	pLayout->Release();
 	if (pVS)		pVS->Release();
 	if (pPS)		pPS->Release();
-	if (pVBuffer)	pVBuffer->Release();
 }
 
 void OpenConsole()
@@ -238,6 +246,13 @@ void OpenConsole()
 
 void RenderFrame()
 {
+	CBUFFER0 cBuffer;
+	cBuffer.pos = XMFLOAT3(0.5f, 0.0f, 0.0f);
+
+	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
+
+	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
+
 	g_context->ClearRenderTargetView(g_backBuffer, Colors::DarkSlateBlue);
 
 	UINT stride = sizeof(Vertex);
@@ -345,6 +360,13 @@ void InitGraphics()
 	bd.ByteWidth		 = sizeof(Vertex) * 3;
 	bd.BindFlags		 = D3D11_BIND_VERTEX_BUFFER;
 	bd.CPUAccessFlags	 = D3D11_CPU_ACCESS_WRITE;
+
+	D3D11_BUFFER_DESC cb = {0};
+	cb.Usage = D3D11_USAGE_DEFAULT;
+	cb.ByteWidth = sizeof(CBUFFER0);
+	cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	if (FAILED(g_device->CreateBuffer(&cb, NULL, &pCBuffer)))
+		OutputDebugString(L"Failed to create constant buffer");
 
 	g_device->CreateBuffer(&bd, NULL, &pVBuffer);
 
