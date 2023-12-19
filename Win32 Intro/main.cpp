@@ -28,7 +28,16 @@ ID3D11PixelShader*      pPS          = NULL;
 ID3D11InputLayout*      pLayout      = NULL;
 
 ID3D11Buffer* pVBuffer = NULL;
+ID3D11Buffer* pIBuffer = NULL;
 ID3D11Buffer* pCBuffer = NULL;
+
+#pragma region Object WVP
+
+XMFLOAT3 pos   { 0,0,1 };
+XMFLOAT3 rot   { 0,0,0 };
+XMFLOAT3 scl   { 1,1,1 };
+
+#pragma endregion
 
 struct Vertex
 {
@@ -38,9 +47,9 @@ struct Vertex
 
 struct CBUFFER0
 {
-	XMFLOAT3 pos;
-	float padding;
+	XMMATRIX WVP;
 };
+
 
 // Forward declarations
 HRESULT InitWindow(HINSTANCE instanceHandle, int nCmdShow);
@@ -226,6 +235,7 @@ void CleanD3D()
 	if (g_context)	g_context->Release();
 	if (g_device)	g_device->Release();
 	if (pVBuffer)	pVBuffer->Release();
+	if (pIBuffer)	pIBuffer->Release();
 	if (pCBuffer)	pCBuffer->Release();
 	if (pLayout)	pLayout->Release();
 	if (pVS)		pVS->Release();
@@ -247,10 +257,13 @@ void OpenConsole()
 void RenderFrame()
 {
 	CBUFFER0 cBuffer;
-	cBuffer.pos = XMFLOAT3(0.5f, 0.0f, 0.0f);
+	const XMMATRIX translation = XMMatrixTranslation(pos.x, pos.y, pos.z);
+	const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(rot.x, rot.y, rot.z);
+	const XMMATRIX scale = XMMatrixScaling(scl.x, scl.y, scl.z);
+
+	cBuffer.WVP = scale * rotation * translation;
 
 	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
-
 	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
 
 	g_context->ClearRenderTargetView(g_backBuffer, Colors::DarkSlateBlue);
@@ -258,10 +271,12 @@ void RenderFrame()
 	UINT stride = sizeof(Vertex);
 	UINT offset = 0;
 	g_context->IASetVertexBuffers(0, 1, &pVBuffer, &stride, &offset);
+	g_context->IASetIndexBuffer(pIBuffer, DXGI_FORMAT_R32_UINT, 0);
 
 	g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	g_context->Draw(3, 0);
+	//g_context->Draw(3, 0);
+	g_context->DrawIndexed(36, 0, 0);
 
 	g_swapChain->Present(0, 0);
 }
@@ -335,8 +350,10 @@ HRESULT InitPipeline()
 	if (FAILED(result))
 	{
 		OutputDebugString(L"Failed to create input layout");
+		std::cout << "Failed to create input layout\n";
 		return result;
 	}
+	OutputDebugString(L"Successfully created input layout\n");
 
 	g_context->IASetInputLayout(pLayout);
 
@@ -348,16 +365,50 @@ HRESULT InitPipeline()
 
 void InitGraphics()
 {
-	Vertex vertices[] = 
+	Vertex vertices[] =
 	{
-		{ XMFLOAT3(-0.5f, -0.5f, 0.0f), XMFLOAT4(1.0f, 0.0f, 0.0f, 1.0f)},
-		{ XMFLOAT3( 0.0f,  0.5f, 0.0f), XMFLOAT4(0.0f, 1.0f, 0.0f, 1.0f)},
-		{ XMFLOAT3( 0.5f, -0.5f, 0.0f), XMFLOAT4(0.0f, 0.0f, 1.0f, 1.0f)}
+							    // x	    y         z                        r         g         b         a
+		{XMFLOAT3{-0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  0.0f,  0.0f,  1.0f}},  // Front BL
+		{XMFLOAT3{-0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  1.0f,  0.0f,  1.0f}},  // Front TL
+		{XMFLOAT3{ 0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  0.0f,  1.0f,  1.0f}},  // Front TR
+		{XMFLOAT3{ 0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  1.0f,  1.0f,  1.0f}},  // Front BR
+
+		{XMFLOAT3{-0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  1.0f,  1.0f,  1.0f}},  // Back BL
+		{XMFLOAT3{-0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  0.0f,  1.0f,  1.0f}},  // Back TL
+		{XMFLOAT3{ 0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  1.0f,  0.0f,  1.0f}},  // Back TR
+		{XMFLOAT3{ 0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  0.0f,  0.0f,  1.0f}},  // Back BR
 	};
+
+	const unsigned int indices[] =
+	{
+		0,1,2,2,3,0, // Front
+		7,6,5,5,4,7, // Back
+		4,5,1,1,0,4, // Left
+		3,2,6,6,7,3, // Right
+		1,5,6,6,2,1, // Top
+		4,0,3,3,7,4  // Bottom
+	};
+
+	D3D11_BUFFER_DESC ibd = {0};
+	ibd.Usage			= D3D11_USAGE_DEFAULT;
+	ibd.ByteWidth		= sizeof(indices);
+	ibd.BindFlags		= D3D11_BIND_INDEX_BUFFER;
+
+	D3D11_SUBRESOURCE_DATA initData = {0};
+	initData.pSysMem = indices;
+
+	if(FAILED(g_device->CreateBuffer(&ibd, &initData, &pIBuffer)))
+	{
+		OutputDebugString(L"Failed to create index buffer");
+		std::cout << "Failed to create index buffer\n";
+		return;
+	}
+	OutputDebugString(L"Successfully created index buffer\n");
+
 
 	D3D11_BUFFER_DESC bd = {0};
 	bd.Usage			 = D3D11_USAGE_DYNAMIC;
-	bd.ByteWidth		 = sizeof(Vertex) * 3;
+	bd.ByteWidth		 = sizeof(vertices);
 	bd.BindFlags		 = D3D11_BIND_VERTEX_BUFFER;
 	bd.CPUAccessFlags	 = D3D11_CPU_ACCESS_WRITE;
 
@@ -366,7 +417,12 @@ void InitGraphics()
 	cb.ByteWidth = sizeof(CBUFFER0);
 	cb.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 	if (FAILED(g_device->CreateBuffer(&cb, NULL, &pCBuffer)))
+	{
 		OutputDebugString(L"Failed to create constant buffer");
+		std::cout << "Failed to create constant buffer\n";
+		return;
+	}
+	OutputDebugString(L"Successfully created constant buffer\n");
 
 	g_device->CreateBuffer(&bd, NULL, &pVBuffer);
 
