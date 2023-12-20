@@ -1,7 +1,6 @@
 cbuffer CBuffer0
 {
-    float3 pos;
-    float padding;
+    matrix WVP;
 }
 
 struct VIn
@@ -20,7 +19,8 @@ VOut main(VIn input)
 {
 	VOut output;
 	
-	output.position = float4(input.position, 1) + float4(pos, 0);
+	//output.position = mul(WVP, input.position);
+	output.position = float4(input.position, 1.0f);
 	output.color = input.color;
 	
 	return output;
