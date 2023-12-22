@@ -22,6 +22,7 @@ IDXGISwapChain*			g_swapChain  = NULL;
 ID3D11Device*			g_device	 = NULL;
 ID3D11DeviceContext*	g_context	 = NULL;
 ID3D11RenderTargetView* g_backBuffer = NULL;
+ID3D11DepthStencilView* g_ZBuffer	 = NULL;
 
 ID3D11VertexShader*     pVS          = NULL;
 ID3D11PixelShader*      pPS          = NULL;
@@ -33,9 +34,23 @@ ID3D11Buffer* pCBuffer = NULL;
 
 #pragma region Object WVP
 
-XMFLOAT3 pos   { 0,0,2 };
-XMFLOAT3 rot   { 0,0,0 };
-XMFLOAT3 scl   { 0.5,0.5,0.5 };
+struct Transform
+{
+	XMFLOAT3 pos{ 0,0,2 };
+	XMFLOAT3 rot{ 0,0,0 };
+	XMFLOAT3 scl{ 0.5,0.5,0.5 };
+
+	XMMATRIX GetWorldMaxtrix()
+	{
+		const XMMATRIX translation = XMMatrixTranslation(pos.x, pos.y, pos.z);
+		const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(rot.x, rot.y, rot.z);
+		const XMMATRIX scale = XMMatrixScaling(scl.x, scl.y, scl.z);
+		XMMATRIX world = scale * rotation * translation;
+		return world;
+	}
+};
+
+Transform cube1, cube2;
 
 #pragma endregion
 
@@ -54,6 +69,17 @@ struct Camera
 {
 	float x = 0, y = 0, z = 0;
 	float pitch = XM_PIDIV2, yaw = 0;
+
+	XMMATRIX GetViewMatrix()
+	{
+		XMVECTOR eyePos { x, y, z };
+		XMVECTOR camUp  { 0, 1, 0 };
+		XMVECTOR lookTo{ sin(yaw) * sin(pitch),
+						 cos(pitch), 
+						 cos(yaw) * sin(pitch) };
+		XMMATRIX view = XMMatrixLookToLH(eyePos, lookTo, camUp);
+		return view;
+	}
 } g_camera;
 
 
@@ -181,11 +207,11 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 				g_camera.y -= 0.1f;
 				break;
 
-			case VK_UP:
+			case VK_DOWN:
 				g_camera.pitch += XM_PI / 8;
 				break;
 
-			case VK_DOWN:
+			case VK_UP:
 				g_camera.pitch -= XM_PI / 8;
 				break;
 
@@ -263,7 +289,38 @@ HRESULT InitD3D(HWND hWnd)
 	pBackBufferTexture->Release();
 
 	// Set render target
-	g_context->OMSetRenderTargets(1, &g_backBuffer, NULL);
+	D3D11_TEXTURE2D_DESC tex2dDesc = {0};
+	tex2dDesc.Width				= SCREEN_WIDTH;
+	tex2dDesc.Height			= SCREEN_HEIGHT;
+	tex2dDesc.ArraySize			= 1;
+	tex2dDesc.MipLevels			= 1;
+	tex2dDesc.Format 	   	    = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	tex2dDesc.SampleDesc.Count	= scd.SampleDesc.Count;
+	tex2dDesc.BindFlags			= D3D11_BIND_DEPTH_STENCIL;
+	tex2dDesc.Usage				= D3D11_USAGE_DEFAULT;
+
+	ID3D11Texture2D* pZBufferTexture = nullptr;
+	hr = g_device->CreateTexture2D(&tex2dDesc, NULL, &pZBufferTexture);
+	if (FAILED(hr))
+	{
+		OutputDebugString(L"Failed to create Z buffer texture");
+		return E_FAIL;
+	}
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvd;
+	ZeroMemory(&dsvd, sizeof(D3D11_DEPTH_STENCIL_VIEW_DESC));
+	dsvd.Format				= tex2dDesc.Format;
+	dsvd.ViewDimension		= D3D11_DSV_DIMENSION_TEXTURE2D;
+	hr = g_device->CreateDepthStencilView(pZBufferTexture, &dsvd, &g_ZBuffer);
+	if (FAILED(hr))
+	{
+		OutputDebugString(L"Failed to create Z buffer");
+		return E_FAIL;
+	}
+	pZBufferTexture->Release();
+
+	
+	g_context->OMSetRenderTargets(1, &g_backBuffer, g_ZBuffer);
 
 	// Setup viewport
 	D3D11_VIEWPORT vp = {};
@@ -286,6 +343,7 @@ void CleanD3D()
 	if (g_backBuffer) g_backBuffer->Release();
 	if (g_swapChain) g_swapChain->Release();
 	if (g_context)	g_context->Release();
+	if (g_ZBuffer)	g_ZBuffer->Release();
 	if (g_device)	g_device->Release();
 	if (pVBuffer)	pVBuffer->Release();
 	if (pIBuffer)	pIBuffer->Release();
@@ -309,47 +367,51 @@ void OpenConsole()
 
 void RenderFrame()
 {
-	// Position
-	CBUFFER0 cBuffer;
-	const XMMATRIX translation = XMMatrixTranslation(pos.x, pos.y, pos.z);
-	const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(rot.x, rot.y, rot.z);
-	const XMMATRIX scale = XMMatrixScaling(scl.x, scl.y, scl.z);
-
-	// WVP + camera
-	XMVECTOR eyePos = { g_camera.x, g_camera.y, g_camera.z };
-	XMVECTOR lookAt{0,0,1};
-	XMVECTOR camUp{0,1,0};
-
-	XMMATRIX world = scale * rotation * translation;
-	XMMATRIX view = XMMatrixLookAtLH(eyePos, lookAt, camUp);
-	XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(60), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.0f);
-
-	cBuffer.WVP = world * view * projection;
-
-	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
-	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
-
+	// Clear back buffer
 	g_context->ClearRenderTargetView(g_backBuffer, Colors::DarkSlateBlue);
-
+	g_context->ClearDepthStencilView(g_ZBuffer, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+	
+	// Set vertex buffer, index buffer, primitive topology (per mesh)
 	UINT stride = sizeof(Vertex);
 	UINT offset = 0;
 	g_context->IASetVertexBuffers(0, 1, &pVBuffer, &stride, &offset);
 	g_context->IASetIndexBuffer(pIBuffer, DXGI_FORMAT_R32_UINT, 0);
+   	g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
-	g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	// View and projection matrices
+	XMMATRIX world;// = cube1.GetWorldMaxtrix();
+	XMMATRIX view = g_camera.GetViewMatrix();
+	XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(60), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.0f);
 
-	//g_context->Draw(3, 0);
+
+	// World matrix and constant buffer (per object)
+	world = cube1.GetWorldMaxtrix();
+	CBUFFER0 cBuffer;
+	cBuffer.WVP = world * view * projection;
+
+
+	// Update constant buffer
+	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
+	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
+
+	g_context->DrawIndexed(36, 0, 0);
+
+
+	world = cube2.GetWorldMaxtrix();
+	cBuffer.WVP = world * view * projection;
+	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
+	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
 	g_context->DrawIndexed(36, 0, 0);
 
 	g_swapChain->Present(0, 0);
 
 	static float fakeTime = 0;
 	fakeTime += 0.0001f;
-	pos.x = sin(fakeTime);
-	pos.y = cos(fakeTime);
+	cube1.pos.x = sin(fakeTime);
+	cube1.pos.y = cos(fakeTime);
 
-	rot.x = fakeTime;
-	rot.y = fakeTime;
+	cube1.rot.x = fakeTime;
+	cube1.rot.y = fakeTime;
 }
 
 HRESULT InitPipeline()
