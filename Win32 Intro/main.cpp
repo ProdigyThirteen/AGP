@@ -33,9 +33,9 @@ ID3D11Buffer* pCBuffer = NULL;
 
 #pragma region Object WVP
 
-XMFLOAT3 pos   { 0,0,1 };
+XMFLOAT3 pos   { 0,0,2 };
 XMFLOAT3 rot   { 0,0,0 };
-XMFLOAT3 scl   { 1,1,1 };
+XMFLOAT3 scl   { 0.5,0.5,0.5 };
 
 #pragma endregion
 
@@ -49,6 +49,12 @@ struct CBUFFER0
 {
 	XMMATRIX WVP;
 };
+
+struct Camera
+{
+	float x = 0, y = 0, z = 0;
+	float pitch = XM_PIDIV2, yaw = 0;
+} g_camera;
 
 
 // Forward declarations
@@ -145,8 +151,55 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 		break;
 
 	case WM_KEYDOWN:
-		if (wParam == VK_ESCAPE)
-			DestroyWindow(hWnd);
+		switch (wParam)
+		{
+			case VK_ESCAPE:
+				PostQuitMessage(0);
+				break;
+
+			case 'W':
+				g_camera.z += 0.1f;
+				break;
+
+			case 'S':
+				g_camera.z -= 0.1f;
+				break;
+
+			case 'A':
+				g_camera.x -= 0.1f;
+				break;
+
+			case 'D':
+				g_camera.x += 0.1f;
+				break;
+
+			case VK_SPACE:
+				g_camera.y += 0.1f;
+				break;
+
+			case VK_SHIFT:
+				g_camera.y -= 0.1f;
+				break;
+
+			case VK_UP:
+				g_camera.pitch += XM_PI / 8;
+				break;
+
+			case VK_DOWN:
+				g_camera.pitch -= XM_PI / 8;
+				break;
+
+			case VK_LEFT:
+				g_camera.yaw -= XM_PI / 8;
+				break;
+
+			case VK_RIGHT:
+				g_camera.yaw += XM_PI / 8;
+				break;
+
+			default:
+				break;
+		}
 		break;
 
 	default:
@@ -256,12 +309,22 @@ void OpenConsole()
 
 void RenderFrame()
 {
+	// Position
 	CBUFFER0 cBuffer;
 	const XMMATRIX translation = XMMatrixTranslation(pos.x, pos.y, pos.z);
 	const XMMATRIX rotation = XMMatrixRotationRollPitchYaw(rot.x, rot.y, rot.z);
 	const XMMATRIX scale = XMMatrixScaling(scl.x, scl.y, scl.z);
 
-	cBuffer.WVP = scale * rotation * translation;
+	// WVP + camera
+	XMVECTOR eyePos = { g_camera.x, g_camera.y, g_camera.z };
+	XMVECTOR lookAt{0,0,1};
+	XMVECTOR camUp{0,1,0};
+
+	XMMATRIX world = scale * rotation * translation;
+	XMMATRIX view = XMMatrixLookAtLH(eyePos, lookAt, camUp);
+	XMMATRIX projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(60), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.0f);
+
+	cBuffer.WVP = world * view * projection;
 
 	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
 	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
@@ -279,6 +342,14 @@ void RenderFrame()
 	g_context->DrawIndexed(36, 0, 0);
 
 	g_swapChain->Present(0, 0);
+
+	static float fakeTime = 0;
+	fakeTime += 0.0001f;
+	pos.x = sin(fakeTime);
+	pos.y = cos(fakeTime);
+
+	rot.x = fakeTime;
+	rot.y = fakeTime;
 }
 
 HRESULT InitPipeline()
