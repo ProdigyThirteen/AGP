@@ -9,6 +9,9 @@
 #include <d3dcompiler.h>
 #include "WICTextureLoader.h"
 
+#include <Mouse.h>
+#include <Keyboard.h>
+
 using namespace DirectX;
 
 // Global variables
@@ -87,6 +90,11 @@ struct Camera
 	}
 } g_camera;
 
+Mouse mouse;
+Mouse::ButtonStateTracker mouseTracker;
+Keyboard keyboard;
+Keyboard::KeyboardStateTracker kbTracker;
+
 
 // Forward declarations
 HRESULT InitWindow(HINSTANCE instanceHandle, int nCmdShow);
@@ -97,6 +105,7 @@ void    CleanD3D();
 void	OpenConsole();
 void	RenderFrame();
 void	InitGraphics();
+void	HandleInput();
 
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHandle, _In_ LPSTR cmdLine, _In_ int nCmdShow)
 {
@@ -111,6 +120,9 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHand
 #if (_DEBUG)
 	//OpenConsole();
 #endif
+
+	Mouse::Get().SetWindow(g_hWnd);
+	Mouse::Get().SetMode(Mouse::Mode::MODE_RELATIVE);
 
 	MSG msg;
 
@@ -127,6 +139,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHand
 		else
 		{
 			// Update and render game
+			HandleInput();
 			RenderFrame();
 		}
 	}
@@ -181,56 +194,45 @@ LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lPara
 		PostQuitMessage(0);
 		break;
 
-	case WM_KEYDOWN:
-		switch (wParam)
+	case WM_ACTIVATE:
+	case WM_ACTIVATEAPP:
+	case WM_INPUT:
+		Keyboard::ProcessMessage(message, wParam, lParam);
+		Mouse::ProcessMessage(message, wParam, lParam);
+		break;
+
+	case WM_SYSKEYDOWN:
+		if (wParam == VK_RETURN && (lParam & 0x60000000) == 0x20000000)
 		{
-			case VK_ESCAPE:
-				PostQuitMessage(0);
-				break;
-
-			case 'W':
-				g_camera.z += 0.1f;
-				break;
-
-			case 'S':
-				g_camera.z -= 0.1f;
-				break;
-
-			case 'A':
-				g_camera.x -= 0.1f;
-				break;
-
-			case 'D':
-				g_camera.x += 0.1f;
-				break;
-
-			case VK_SPACE:
-				g_camera.y += 0.1f;
-				break;
-
-			case VK_SHIFT:
-				g_camera.y -= 0.1f;
-				break;
-
-			case VK_DOWN:
-				g_camera.pitch += XM_PI / 8;
-				break;
-
-			case VK_UP:
-				g_camera.pitch -= XM_PI / 8;
-				break;
-
-			case VK_LEFT:
-				g_camera.yaw -= XM_PI / 8;
-				break;
-
-			case VK_RIGHT:
-				g_camera.yaw += XM_PI / 8;
-				break;
-
-			default:
-				break;
+			// Alt + Enter
+			// Toggle fullscreen
+			BOOL fullscreen;
+			g_swapChain->GetFullscreenState(&fullscreen, NULL);
+			g_swapChain->SetFullscreenState(!fullscreen, NULL);
 		}
+		Keyboard::ProcessMessage(message, wParam, lParam);
+
+	case WM_KEYDOWN:
+	case WM_KEYUP:
+	case WM_SYSKEYUP:
+		Keyboard::ProcessMessage(message, wParam, lParam);
+		break;
+
+	case WM_MOUSEACTIVATE:
+		return MA_ACTIVATEANDEAT;
+
+	case WM_MOUSEMOVE:
+	case WM_LBUTTONDOWN:
+	case WM_LBUTTONUP:
+	case WM_RBUTTONDOWN:
+	case WM_RBUTTONUP:
+	case WM_MBUTTONDOWN:
+	case WM_MBUTTONUP:
+	case WM_MOUSEWHEEL:
+	case WM_XBUTTONDOWN:
+	case WM_XBUTTONUP:
+	case WM_MOUSEHOVER:
+		Mouse::ProcessMessage(message, wParam, lParam);
 		break;
 
 	default:
@@ -589,5 +591,68 @@ void InitGraphics()
 	sampDesc.AddressW		= D3D11_TEXTURE_ADDRESS_WRAP;
 	sampDesc.MaxLOD			= D3D11_FLOAT32_MAX;
 	g_device->CreateSamplerState(&sampDesc, &pSampler);
+
+}
+
+void HandleInput()
+{
+	auto kbState = Keyboard::Get().GetState();
+	kbTracker.Update(kbState);
+
+	auto mouseState = Mouse::Get().GetState();
+	mouseTracker.Update(mouseState);
+
+	float sense = XM_2PI * 0.00025f;
+	g_camera.yaw += mouseState.x * sense;
+	g_camera.pitch += mouseState.y * sense;
+
+
+	// Get camera forward vector
+	const XMVECTOR lookTo = XMVectorSet(sin(g_camera.yaw) * sin(g_camera.pitch),
+								  cos(g_camera.pitch),
+								  cos(g_camera.yaw) * sin(g_camera.pitch),
+								  0);
+
+	// Get camera right vector
+	const XMVECTOR camRight = XMVector3Cross(lookTo, XMVectorSet(0, 1, 0, 0));
+
+	if (kbState.Escape)
+		PostQuitMessage(0);
+
+	if (kbState.W)
+	{
+		g_camera.x += XMVectorGetX(lookTo) * 0.0001f;
+		g_camera.y += XMVectorGetY(lookTo) * 0.0001f;
+		g_camera.z += XMVectorGetZ(lookTo) * 0.0001f;
+	}
+
+	if (kbState.S)
+	{
+		g_camera.x -= XMVectorGetX(lookTo) * 0.0001f;
+		g_camera.y -= XMVectorGetY(lookTo) * 0.0001f;
+		g_camera.z -= XMVectorGetZ(lookTo) * 0.0001f;
+	}
+
+	if (kbState.D)
+	{
+		g_camera.x -= XMVectorGetX(camRight) * 0.0001f;
+		g_camera.z -= XMVectorGetZ(camRight) * 0.0001f;
+	}
+
+	if (kbState.A)
+	{
+		g_camera.x += XMVectorGetX(camRight) * 0.0001f;
+		g_camera.z += XMVectorGetZ(camRight) * 0.0001f;
+	}
+
+	if (kbState.Space)
+	{
+		g_camera.y += 0.0001f;
+	}
+
+	if (kbState.LeftControl)
+	{
+		g_camera.y -= 0.0001f;
+	}
 
 }
