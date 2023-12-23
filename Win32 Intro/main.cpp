@@ -7,6 +7,7 @@
 #include <DirectXColors.h>
 #include <d3d11shader.h>
 #include <d3dcompiler.h>
+#include "WICTextureLoader.h"
 
 using namespace DirectX;
 
@@ -31,6 +32,9 @@ ID3D11InputLayout*      pLayout      = NULL;
 ID3D11Buffer* pVBuffer = NULL;
 ID3D11Buffer* pIBuffer = NULL;
 ID3D11Buffer* pCBuffer = NULL;
+
+ID3D11ShaderResourceView* pTexture = NULL;
+ID3D11SamplerState* pSampler	   = NULL;
 
 #pragma region Object WVP
 
@@ -58,6 +62,7 @@ struct Vertex
 {
 	XMFLOAT3 Position;
 	XMFLOAT4 Color;
+	XMFLOAT2 UV;
 };
 
 struct CBUFFER0
@@ -95,10 +100,10 @@ void	InitGraphics();
 
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHandle, _In_ LPSTR cmdLine, _In_ int nCmdShow)
 {
-	if(FAILED(InitWindow(hInstance, nCmdShow)))
+	if (FAILED(InitWindow(hInstance, nCmdShow)))
 		MessageBox(NULL, L"Failed to create window", L"Error", MB_OK | MB_ICONERROR);
 
-	if(FAILED(InitD3D(g_hWnd)))
+	if (FAILED(InitD3D(g_hWnd)))
 		MessageBox(NULL, L"Failed to create D3D device", L"Error", MB_OK | MB_ICONERROR);
 
 	InitGraphics();
@@ -116,7 +121,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHand
 			TranslateMessage(&msg);
 			DispatchMessage(&msg);
 
-			if(msg.message == WM_QUIT)
+			if (msg.message == WM_QUIT)
 				break;
 		}
 		else
@@ -348,6 +353,8 @@ void CleanD3D()
 	if (pVBuffer)	pVBuffer->Release();
 	if (pIBuffer)	pIBuffer->Release();
 	if (pCBuffer)	pCBuffer->Release();
+	if (pTexture)	pTexture->Release();
+	if (pSampler)	pSampler->Release();
 	if (pLayout)	pLayout->Release();
 	if (pVS)		pVS->Release();
 	if (pPS)		pPS->Release();
@@ -377,6 +384,10 @@ void RenderFrame()
 	g_context->IASetVertexBuffers(0, 1, &pVBuffer, &stride, &offset);
 	g_context->IASetIndexBuffer(pIBuffer, DXGI_FORMAT_R32_UINT, 0);
    	g_context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	// Set texture and sampler
+	g_context->PSSetSamplers(0, 1, &pSampler);
+	g_context->PSSetShaderResources(0, 1, &pTexture);
 
 	// View and projection matrices
 	XMMATRIX world;// = cube1.GetWorldMaxtrix();
@@ -500,16 +511,15 @@ void InitGraphics()
 {
 	Vertex vertices[] =
 	{
-							    // x	    y         z                        r         g         b         a
-		{XMFLOAT3{-0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  0.0f,  0.0f,  1.0f}},  // Front BL
-		{XMFLOAT3{-0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  1.0f,  0.0f,  1.0f}},  // Front TL
-		{XMFLOAT3{ 0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  0.0f,  1.0f,  1.0f}},  // Front TR
-		{XMFLOAT3{ 0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  1.0f,  1.0f,  1.0f}},  // Front BR
+		{XMFLOAT3{-0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  0.0f,  0.0f,  1.0f}, XMFLOAT2{ 0.0f, 1.0f }},  // Front BL
+		{XMFLOAT3{-0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  1.0f,  0.0f,  1.0f}, XMFLOAT2{ 0.0f, 0.0f }},  // Front TL
+		{XMFLOAT3{ 0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  0.0f,  1.0f,  1.0f}, XMFLOAT2{ 1.0f, 0.0f }},  // Front TR
+		{XMFLOAT3{ 0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  1.0f,  1.0f,  1.0f}, XMFLOAT2{ 1.0f, 1.0f }},  // Front BR
 
-		{XMFLOAT3{-0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  1.0f,  1.0f,  1.0f}},  // Back BL
-		{XMFLOAT3{-0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  0.0f,  1.0f,  1.0f}},  // Back TL
-		{XMFLOAT3{ 0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  1.0f,  0.0f,  1.0f}},  // Back TR
-		{XMFLOAT3{ 0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  0.0f,  0.0f,  1.0f}},  // Back BR
+		{XMFLOAT3{-0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  1.0f,  1.0f,  1.0f}, XMFLOAT2{ 0.0f, 1.0f }},  // Back BL
+		{XMFLOAT3{-0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  0.0f,  1.0f,  1.0f}, XMFLOAT2{ 0.0f, 0.0f }},  // Back TL
+		{XMFLOAT3{ 0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  1.0f,  0.0f,  1.0f}, XMFLOAT2{ 1.0f, 0.0f }},  // Back TR
+		{XMFLOAT3{ 0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  0.0f,  0.0f,  1.0f}, XMFLOAT2{ 1.0f, 1.0f }},  // Back BR
 	};
 
 	const unsigned int indices[] =
@@ -566,5 +576,18 @@ void InitGraphics()
 	g_context->Map(pVBuffer, NULL, D3D11_MAP_WRITE_DISCARD, NULL, &ms);
 	memcpy(ms.pData, vertices, sizeof(vertices));
 	g_context->Unmap(pVBuffer, NULL);
+
+	// Texture
+	CreateWICTextureFromFile(g_device, g_context, L"Box.bmp", NULL, &pTexture);
+
+	// Sampler
+	D3D11_SAMPLER_DESC sampDesc;
+	ZeroMemory(&sampDesc, sizeof(sampDesc));
+	sampDesc.Filter			= D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	sampDesc.AddressU		= D3D11_TEXTURE_ADDRESS_WRAP;
+	sampDesc.AddressV		= D3D11_TEXTURE_ADDRESS_WRAP;
+	sampDesc.AddressW		= D3D11_TEXTURE_ADDRESS_WRAP;
+	sampDesc.MaxLOD			= D3D11_FLOAT32_MAX;
+	g_device->CreateSamplerState(&sampDesc, &pSampler);
 
 }
