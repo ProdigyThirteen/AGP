@@ -13,6 +13,8 @@
 #include <Mouse.h>
 #include <Keyboard.h>
 
+#include "objfilemodel.h"
+
 using namespace DirectX;
 
 // Global variables
@@ -44,6 +46,17 @@ ID3D11SamplerState* pSampler	   = NULL;
 Text2D* pText;
 ID3D11BlendState* pAlphaBlendStateEnable = NULL;
 ID3D11BlendState* pAlphaBlendStateDisable = NULL;
+
+// Skybox
+ID3D11RasterizerState* pRasterSolid = NULL;
+ID3D11RasterizerState* pRasterSkybox = NULL;
+ID3D11DepthStencilState* pDepthWriteSolid = NULL;
+ID3D11DepthStencilState* pDepthWriteSkybox = NULL;
+ID3D11Buffer* pSkyboxCBuffer = NULL;
+ID3D11ShaderResourceView* pSkyboxTexture = NULL;
+ID3D11VertexShader* pSkyboxVS = NULL;
+ID3D11PixelShader* pSkyboxPS = NULL;
+ID3D11InputLayout* pSkyboxLayout = NULL;
 
 #pragma region Object WVP
 
@@ -115,6 +128,9 @@ struct PointLight
 
 PointLight pointLights[MAX_POINT_LIGHTS];
 
+// Object loading
+ObjFileModel* model;
+
 struct CBUFFER0
 {
 	XMMATRIX WVP;
@@ -136,6 +152,9 @@ void	RenderFrame();
 void	InitGraphics();
 void	HandleInput();
 void	InitScene();
+
+HRESULT LoadVertexShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11VertexShader** vs, ID3D11InputLayout** il);
+HRESULT LoadPixelShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11PixelShader** ps);
 
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHandle, _In_ LPSTR cmdLine, _In_ int nCmdShow)
 {
@@ -393,6 +412,23 @@ HRESULT InitD3D(HWND hWnd)
 	blendDesc.RenderTarget[0].BlendEnable = FALSE;
 	g_device->CreateBlendState(&blendDesc, &pAlphaBlendStateDisable);
 
+	// Skybox
+	D3D11_RASTERIZER_DESC rasterDesc;
+	ZeroMemory(&rasterDesc, sizeof(D3D11_RASTERIZER_DESC));
+	rasterDesc.FillMode				= D3D11_FILL_SOLID;
+	rasterDesc.CullMode				= D3D11_CULL_FRONT;
+	g_device->CreateRasterizerState(&rasterDesc, &pRasterSolid);
+	rasterDesc.CullMode				= D3D11_CULL_BACK;
+	g_device->CreateRasterizerState(&rasterDesc, &pRasterSkybox);
+
+	D3D11_DEPTH_STENCIL_DESC depthDesc = { 0 };
+	depthDesc.DepthEnable = true;
+	depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+	depthDesc.DepthFunc = D3D11_COMPARISON_LESS;
+	g_device->CreateDepthStencilState(&depthDesc, &pDepthWriteSolid);
+	depthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ZERO;
+	g_device->CreateDepthStencilState(&depthDesc, &pDepthWriteSkybox);
+
 	return S_OK;
 }
 
@@ -414,6 +450,17 @@ void CleanD3D()
 	if (pVS)					 pVS->Release();
 	if (pPS)					 pPS->Release();
 	delete pText;
+	delete model;
+
+	// Skybox
+	if (pRasterSolid) pRasterSolid->Release();
+	if (pRasterSkybox) pRasterSkybox->Release();
+	if (pDepthWriteSolid) pDepthWriteSolid->Release();
+	if (pDepthWriteSkybox) pDepthWriteSkybox->Release();
+	if (pSkyboxCBuffer) pSkyboxCBuffer->Release();
+	if (pSkyboxTexture) pSkyboxTexture->Release();
+	if (pSkyboxVS) pSkyboxVS->Release();
+	if (pSkyboxPS) pSkyboxPS->Release();
 }
 
 void OpenConsole()
@@ -481,7 +528,8 @@ void RenderFrame()
 	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
 	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
 
-	g_context->DrawIndexed(36, 0, 0);
+	//g_context->DrawIndexed(36, 0, 0);
+	model->Draw();
 
 
 	//world = cube2.GetWorldMaxtrix();
@@ -509,83 +557,88 @@ void RenderFrame()
 
 HRESULT InitPipeline()
 {
-	HRESULT result;
+	/*{
+		HRESULT result;
 
-	auto vertexShaderBytecode = DX::ReadData(L"CompiledShaders/VertexShader.cso");
-	auto pixelShaderBytecode = DX::ReadData(L"CompiledShaders/PixelShader.cso");
+		auto vertexShaderBytecode = DX::ReadData(L"CompiledShaders/VertexShader.cso");
+		auto pixelShaderBytecode = DX::ReadData(L"CompiledShaders/PixelShader.cso");
 
-	g_device->CreateVertexShader(vertexShaderBytecode.data(), vertexShaderBytecode.size(), NULL, &pVS);
-	g_device->CreatePixelShader(pixelShaderBytecode.data(), pixelShaderBytecode.size(), NULL, &pPS);
+		g_device->CreateVertexShader(vertexShaderBytecode.data(), vertexShaderBytecode.size(), NULL, &pVS);
+		g_device->CreatePixelShader(pixelShaderBytecode.data(), pixelShaderBytecode.size(), NULL, &pPS);
 
-	g_context->VSSetShader(pVS, 0, 0);
-	g_context->PSSetShader(pPS, 0, 0);
+		g_context->VSSetShader(pVS, 0, 0);
+		g_context->PSSetShader(pPS, 0, 0);
 
-	// Shader reflection
+		// Shader reflection
 
-	ID3D11ShaderReflection* vShaderReflection = nullptr;
-	D3DReflect(vertexShaderBytecode.data(), vertexShaderBytecode.size(), IID_ID3D11ShaderReflection, (void**)&vShaderReflection);
+		ID3D11ShaderReflection* vShaderReflection = nullptr;
+		D3DReflect(vertexShaderBytecode.data(), vertexShaderBytecode.size(), IID_ID3D11ShaderReflection, (void**)&vShaderReflection);
 
-	D3D11_SHADER_DESC shaderDesc;
-	vShaderReflection->GetDesc(&shaderDesc);
+		D3D11_SHADER_DESC shaderDesc;
+		vShaderReflection->GetDesc(&shaderDesc);
 
-	auto paramDesc = new D3D11_SIGNATURE_PARAMETER_DESC[shaderDesc.InputParameters] {0};
-	for(UINT i = 0; i < shaderDesc.InputParameters; i++)
-	{
-		vShaderReflection->GetInputParameterDesc(i, &paramDesc[i]);
-	}
-
-	auto ied = new D3D11_INPUT_ELEMENT_DESC[shaderDesc.InputParameters] {0};
-	for(size_t i = 0; i < shaderDesc.InputParameters; i++)
-	{
-		ied[i].SemanticName			= paramDesc[i].SemanticName;
-		ied[i].SemanticIndex		= paramDesc[i].SemanticIndex;
-
-		if (paramDesc[i].ComponentType == D3D_REGISTER_COMPONENT_FLOAT32)
+		auto paramDesc = new D3D11_SIGNATURE_PARAMETER_DESC[shaderDesc.InputParameters]{ 0 };
+		for (UINT i = 0; i < shaderDesc.InputParameters; i++)
 		{
-			switch (paramDesc[i].Mask)
-			{
-			case 1:
-				ied[i].Format = DXGI_FORMAT_R32_FLOAT;
-				break;
-
-			case 3:
-				ied[i].Format = DXGI_FORMAT_R32G32_FLOAT;
-				break;
-
-			case 7:
-				ied[i].Format = DXGI_FORMAT_R32G32B32_FLOAT;
-				break;
-
-			case 15:
-				ied[i].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
-				break;
-
-			default:
-				break;
-			}
+			vShaderReflection->GetInputParameterDesc(i, &paramDesc[i]);
 		}
 
-		ied[i].InputSlot			= 0;
-		ied[i].AlignedByteOffset	= D3D11_APPEND_ALIGNED_ELEMENT;
-		ied[i].InputSlotClass		= D3D11_INPUT_PER_VERTEX_DATA;
-		ied[i].InstanceDataStepRate = 0;
+		auto ied = new D3D11_INPUT_ELEMENT_DESC[shaderDesc.InputParameters]{ 0 };
+		for (size_t i = 0; i < shaderDesc.InputParameters; i++)
+		{
+			ied[i].SemanticName = paramDesc[i].SemanticName;
+			ied[i].SemanticIndex = paramDesc[i].SemanticIndex;
 
-	}
+			if (paramDesc[i].ComponentType == D3D_REGISTER_COMPONENT_FLOAT32)
+			{
+				switch (paramDesc[i].Mask)
+				{
+				case 1:
+					ied[i].Format = DXGI_FORMAT_R32_FLOAT;
+					break;
 
-	result = g_device->CreateInputLayout(ied, shaderDesc.InputParameters, vertexShaderBytecode.data(), vertexShaderBytecode.size(), &pLayout);
-	if (FAILED(result))
-	{
-		OutputDebugString(L"Failed to create input layout");
-		std::cout << "Failed to create input layout\n";
-		return result;
-	}
-	OutputDebugString(L"Successfully created input layout\n");
+				case 3:
+					ied[i].Format = DXGI_FORMAT_R32G32_FLOAT;
+					break;
 
-	g_context->IASetInputLayout(pLayout);
+				case 7:
+					ied[i].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+					break;
 
-	delete[] paramDesc;
-	delete[] ied;
+				case 15:
+					ied[i].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+					break;
 
+				default:
+					break;
+				}
+			}
+
+			ied[i].InputSlot = 0;
+			ied[i].AlignedByteOffset = D3D11_APPEND_ALIGNED_ELEMENT;
+			ied[i].InputSlotClass = D3D11_INPUT_PER_VERTEX_DATA;
+			ied[i].InstanceDataStepRate = 0;
+
+		}
+
+		result = g_device->CreateInputLayout(ied, shaderDesc.InputParameters, vertexShaderBytecode.data(), vertexShaderBytecode.size(), &pLayout);
+		if (FAILED(result))
+		{
+			OutputDebugString(L"Failed to create input layout");
+			std::cout << "Failed to create input layout\n";
+			return result;
+		}
+		OutputDebugString(L"Successfully created input layout\n");
+
+		g_context->IASetInputLayout(pLayout);
+
+		delete[] paramDesc;
+		delete[] ied;
+	}*/
+
+	LoadVertexShader(L"VertexShader.hlsl", "main", &pVS, &pLayout);
+	LoadPixelShader(L"PixelShader.hlsl", "main", &pPS);
+	
 	return S_OK;
 }
 
@@ -742,4 +795,134 @@ void InitScene()
 {
 	pointLights[0] = { XMVECTOR{ 1.5f, 0, -1 }, { 0.9f, 0, 0.85f, 1.0f }, 10.0f, true };
 	pointLights[1] = { XMVECTOR{ -1.5f, 0, -1 }, { 0.0f, 0.9f, 0.85f, 1.0f }, 20.0f, true };
+
+	model = new ObjFileModel((char*)"cube.obj", g_device, g_context);
+}
+
+HRESULT LoadVertexShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11VertexShader** vs, ID3D11InputLayout** il)
+{
+	HRESULT result;
+	ID3DBlob* VSblob, * errorBlob;
+
+	result = D3DCompileFromFile(fileName, NULL, NULL, entrypoint, "vs_4_0", NULL, NULL, &VSblob, &errorBlob);
+	if (FAILED(result))
+	{
+		OutputDebugStringA(reinterpret_cast<const char*>(errorBlob->GetBufferPointer()));
+		errorBlob->Release();
+		return result;
+	}
+
+	result = g_device->CreateVertexShader(VSblob->GetBufferPointer(), VSblob->GetBufferSize(), NULL, vs);
+	if (FAILED(result))
+	{
+		OutputDebugString(L"Failed to create vertex shader");
+		return result;
+	}
+
+	D3D11_INPUT_ELEMENT_DESC ied[] =
+	{
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOUR",	  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "NORMAL",	  0, DXGI_FORMAT_R32G32B32_FLOAT,    0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	};
+
+	result = g_device->CreateInputLayout(ied, ARRAYSIZE(ied), VSblob->GetBufferPointer(), VSblob->GetBufferSize(), il);
+	VSblob->Release();
+	if (FAILED(result))
+	{
+		OutputDebugString(L"Failed to create input layout");
+		return result;
+	}
+
+	/*#pragma region Shader reflection
+	ID3D11ShaderReflection* vShaderReflection = nullptr;
+	D3DReflect(VSblob->GetBufferPointer(), VSblob->GetBufferSize(), IID_ID3D11ShaderReflection, (void**)&vShaderReflection);
+
+	D3D11_SHADER_DESC shaderDesc;
+	vShaderReflection->GetDesc(&shaderDesc);
+
+	auto paramDesc = new D3D11_SIGNATURE_PARAMETER_DESC[shaderDesc.InputParameters] {0};
+	for(UINT i = 0; i < shaderDesc.InputParameters; i++)
+	{
+		vShaderReflection->GetInputParameterDesc(i, &paramDesc[i]);
+	}
+
+	auto ied = new D3D11_INPUT_ELEMENT_DESC[shaderDesc.InputParameters] {0};
+	for(size_t i = 0; i < shaderDesc.InputParameters; i++)
+	{
+		ied[i].SemanticName			= paramDesc[i].SemanticName;
+		ied[i].SemanticIndex		= paramDesc[i].SemanticIndex;
+
+		if (paramDesc[i].ComponentType == D3D_REGISTER_COMPONENT_FLOAT32)
+		{
+			switch (paramDesc[i].Mask)
+			{
+			case 1:
+				ied[i].Format = DXGI_FORMAT_R32_FLOAT;
+				break;
+
+			case 3:
+				ied[i].Format = DXGI_FORMAT_R32G32_FLOAT;
+				break;
+
+			case 7:
+				ied[i].Format = DXGI_FORMAT_R32G32B32_FLOAT;
+				break;
+
+			case 15:
+				ied[i].Format = DXGI_FORMAT_R32G32B32A32_FLOAT;
+				break;
+
+			default:
+				break;
+			}
+		}
+
+		ied[i].InputSlot			= 0;
+		ied[i].AlignedByteOffset	= D3D11_APPEND_ALIGNED_ELEMENT;
+		ied[i].InputSlotClass		= D3D11_INPUT_PER_VERTEX_DATA;
+		ied[i].InstanceDataStepRate = 0;
+
+	}
+
+	result = g_device->CreateInputLayout(ied, shaderDesc.InputParameters, VSblob->GetBufferPointer(), VSblob->GetBufferSize(), il);
+	VSblob->Release();
+	if (FAILED(result))
+	{
+		OutputDebugString(L"Failed to create input layout");
+		return result;
+	}
+	OutputDebugString(L"Successfully created input layout\n");
+
+	delete[] paramDesc;
+	delete[] ied;
+
+#pragma endregion*/
+
+	return S_OK;
+}
+
+HRESULT LoadPixelShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11PixelShader** ps)
+{
+	HRESULT result;
+	ID3DBlob* PSblob, * errorBlob;
+
+	result = D3DCompileFromFile(fileName, NULL, NULL, entrypoint, "ps_4_0", NULL, NULL, &PSblob, &errorBlob);
+	if (FAILED(result))
+	{
+		OutputDebugStringA(reinterpret_cast<const char*>(errorBlob->GetBufferPointer()));
+		errorBlob->Release();
+		return result;
+	}
+
+	result = g_device->CreatePixelShader(PSblob->GetBufferPointer(), PSblob->GetBufferSize(), NULL, ps);
+	PSblob->Release();
+	if (FAILED(result))
+	{
+		OutputDebugString(L"Failed to create pixel shader");
+		return result;
+	}
+
+	return S_OK;
 }

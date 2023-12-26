@@ -62,7 +62,7 @@ VOut main(VIn input)
         float pointLightAttenuation = pointLights[i].strength / (pointLightDistance * pointLightDistance + pointLights[i].strength);
 		float pointAmount = dot(pointLightDir.xyz, input.normal) * pointLightAttenuation;
 		pointAmount = saturate(pointAmount);
-		pointFinal = pointLights[i].color * pointAmount * 5;
+		pointFinal += pointLights[i].color * pointAmount * 5;
 	}
 	
 	

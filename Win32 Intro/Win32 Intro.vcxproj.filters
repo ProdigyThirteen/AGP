@@ -21,6 +21,9 @@
     <ClCompile Include="text2D.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="objfilemodel.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="PixelShader.hlsl">
@@ -38,6 +41,9 @@
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="text2D.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="objfilemodel.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
