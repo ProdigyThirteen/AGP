@@ -7,7 +7,8 @@
 #include <DirectXColors.h>
 #include <d3d11shader.h>
 #include <d3dcompiler.h>
-#include "WICTextureLoader.h"
+#include <WICTextureLoader.h>
+#include "text2D.h"
 
 #include <Mouse.h>
 #include <Keyboard.h>
@@ -17,6 +18,7 @@ using namespace DirectX;
 // Global variables
 #define SCREEN_WIDTH 800
 #define SCREEN_HEIGHT 600
+#define MAX_POINT_LIGHTS 8
 
 HINSTANCE g_hInstance = NULL;
 HWND	  g_hWnd	  = NULL;
@@ -38,6 +40,10 @@ ID3D11Buffer* pCBuffer = NULL;
 
 ID3D11ShaderResourceView* pTexture = NULL;
 ID3D11SamplerState* pSampler	   = NULL;
+
+Text2D* pText;
+ID3D11BlendState* pAlphaBlendStateEnable = NULL;
+ID3D11BlendState* pAlphaBlendStateDisable = NULL;
 
 #pragma region Object WVP
 
@@ -66,12 +72,9 @@ struct Vertex
 	XMFLOAT3 Position;
 	XMFLOAT4 Color;
 	XMFLOAT2 UV;
+	XMFLOAT3 Normal;
 };
 
-struct CBUFFER0
-{
-	XMMATRIX WVP;
-};
 
 struct Camera
 {
@@ -95,6 +98,32 @@ Mouse::ButtonStateTracker mouseTracker;
 Keyboard keyboard;
 Keyboard::KeyboardStateTracker kbTracker;
 
+// Lighting
+XMVECTOR ambientLightColour = { 0.1f, 0.1f, 0.1f, 1.0f };
+XMVECTOR directionalLightShinesFrom = { 0.2788f, 0.7063f, 0.6506f };
+XMVECTOR directionalLightColour = { 0.96f, 0.8f, 0.75f, 1.0f };
+
+
+struct PointLight
+{
+	XMVECTOR position = { 0.0f, 1.0f, -1.0f }; // 16 bytes
+	XMVECTOR colour = { 0.85f, 0.0f, 0.85f, 1.0f }; // 16 bytes
+	float strength = 10.0f; // 4 bytes
+	BOOL active = false; // 4 bytes
+	float padding[2]; // 8 bytes
+};
+
+PointLight pointLights[MAX_POINT_LIGHTS];
+
+struct CBUFFER0
+{
+	XMMATRIX WVP;
+	XMVECTOR ambientLightColour;
+	XMVECTOR directionalLightDir;
+	XMVECTOR directionalLightCol;
+	
+	PointLight pointLights[MAX_POINT_LIGHTS];
+};
 
 // Forward declarations
 HRESULT InitWindow(HINSTANCE instanceHandle, int nCmdShow);
@@ -106,6 +135,7 @@ void	OpenConsole();
 void	RenderFrame();
 void	InitGraphics();
 void	HandleInput();
+void	InitScene();
 
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHandle, _In_ LPSTR cmdLine, _In_ int nCmdShow)
 {
@@ -125,6 +155,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHand
 	Mouse::Get().SetMode(Mouse::Mode::MODE_RELATIVE);
 
 	MSG msg;
+
+	InitScene();
 
 	while (true)
 	{
@@ -342,24 +374,46 @@ HRESULT InitD3D(HWND hWnd)
 	// Setup pipeline
 	InitPipeline();
 
+	pText = new Text2D("font1.png", g_device, g_context);
+
+	// Alpha blending
+	D3D11_BLEND_DESC blendDesc = {0};
+	blendDesc.RenderTarget[0].BlendEnable = TRUE;
+	blendDesc.RenderTarget[0].BlendOp	= D3D11_BLEND_OP_ADD;
+	blendDesc.RenderTarget[0].SrcBlend	 = D3D11_BLEND_SRC_ALPHA;
+	blendDesc.RenderTarget[0].DestBlend	= D3D11_BLEND_INV_SRC_ALPHA;
+	blendDesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+	blendDesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_ONE;
+	blendDesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ZERO;
+	blendDesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+	blendDesc.IndependentBlendEnable = FALSE;
+	blendDesc.AlphaToCoverageEnable = FALSE;
+	g_device->CreateBlendState(&blendDesc, &pAlphaBlendStateEnable);
+
+	blendDesc.RenderTarget[0].BlendEnable = FALSE;
+	g_device->CreateBlendState(&blendDesc, &pAlphaBlendStateDisable);
+
 	return S_OK;
 }
 
 void CleanD3D()
 {
-	if (g_backBuffer) g_backBuffer->Release();
-	if (g_swapChain) g_swapChain->Release();
-	if (g_context)	g_context->Release();
-	if (g_ZBuffer)	g_ZBuffer->Release();
-	if (g_device)	g_device->Release();
-	if (pVBuffer)	pVBuffer->Release();
-	if (pIBuffer)	pIBuffer->Release();
-	if (pCBuffer)	pCBuffer->Release();
-	if (pTexture)	pTexture->Release();
-	if (pSampler)	pSampler->Release();
-	if (pLayout)	pLayout->Release();
-	if (pVS)		pVS->Release();
-	if (pPS)		pPS->Release();
+	if (pAlphaBlendStateDisable) pAlphaBlendStateDisable->Release();
+	if (pAlphaBlendStateEnable)  pAlphaBlendStateEnable->Release();
+	if (g_backBuffer)			 g_backBuffer->Release();
+	if (g_swapChain)			 g_swapChain->Release();
+	if (g_context)				 g_context->Release();
+	if (g_ZBuffer)				 g_ZBuffer->Release();
+	if (g_device)				 g_device->Release();
+	if (pVBuffer)				 pVBuffer->Release();
+	if (pIBuffer)				 pIBuffer->Release();
+	if (pCBuffer)				 pCBuffer->Release();
+	if (pTexture)				 pTexture->Release();
+	if (pSampler)				 pSampler->Release();
+	if (pLayout)				 pLayout->Release();
+	if (pVS)					 pVS->Release();
+	if (pPS)					 pPS->Release();
+	delete pText;
 }
 
 void OpenConsole()
@@ -402,6 +456,26 @@ void RenderFrame()
 	CBUFFER0 cBuffer;
 	cBuffer.WVP = world * view * projection;
 
+	// Lighting
+	cBuffer.ambientLightColour = ambientLightColour;
+	cBuffer.directionalLightCol = directionalLightColour;
+	XMMATRIX transpose = XMMatrixTranspose(world);
+	cBuffer.directionalLightDir = XMVector3Transform(directionalLightShinesFrom, transpose);
+
+	// Point lights
+	for (size_t i = 0; i < MAX_POINT_LIGHTS; ++i)
+	{
+		if (!pointLights[i].active)
+			continue;
+
+		XMMATRIX inverse = XMMatrixInverse(nullptr, world);
+
+		cBuffer.pointLights[i].position = XMVector3Transform(pointLights[i].position, inverse);
+		cBuffer.pointLights[i].colour = pointLights[i].colour;
+		cBuffer.pointLights[i].strength = pointLights[i].strength;
+		cBuffer.pointLights[i].active = pointLights[i].active;
+	}
+
 
 	// Update constant buffer
 	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
@@ -410,21 +484,27 @@ void RenderFrame()
 	g_context->DrawIndexed(36, 0, 0);
 
 
-	world = cube2.GetWorldMaxtrix();
-	cBuffer.WVP = world * view * projection;
-	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
-	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
-	g_context->DrawIndexed(36, 0, 0);
+	//world = cube2.GetWorldMaxtrix();
+	//cBuffer.WVP = world * view * projection;
+	//g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
+	//g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
+	//g_context->DrawIndexed(36, 0, 0);
+
+	// Text
+	g_context->OMSetBlendState(pAlphaBlendStateEnable, NULL, 0xffffffff);
+	pText->AddText("Hello World", -1, +1, 0.075f);
+	pText->RenderText();
+	g_context->OMSetBlendState(pAlphaBlendStateDisable, NULL, 0xffffffff);
 
 	g_swapChain->Present(0, 0);
 
-	static float fakeTime = 0;
-	fakeTime += 0.0001f;
-	cube1.pos.x = sin(fakeTime);
-	cube1.pos.y = cos(fakeTime);
+	//static float fakeTime = 0;
+	//fakeTime += 0.0001f;
+	//cube1.pos.x = sin(fakeTime);
+	//cube1.pos.y = cos(fakeTime);
 
-	cube1.rot.x = fakeTime;
-	cube1.rot.y = fakeTime;
+	//cube1.rot.x = fakeTime;
+	//cube1.rot.y = fakeTime;
 }
 
 HRESULT InitPipeline()
@@ -513,15 +593,16 @@ void InitGraphics()
 {
 	Vertex vertices[] =
 	{
-		{XMFLOAT3{-0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  0.0f,  0.0f,  1.0f}, XMFLOAT2{ 0.0f, 1.0f }},  // Front BL
-		{XMFLOAT3{-0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  1.0f,  0.0f,  1.0f}, XMFLOAT2{ 0.0f, 0.0f }},  // Front TL
-		{XMFLOAT3{ 0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  0.0f,  1.0f,  1.0f}, XMFLOAT2{ 1.0f, 0.0f }},  // Front TR
-		{XMFLOAT3{ 0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  1.0f,  1.0f,  1.0f}, XMFLOAT2{ 1.0f, 1.0f }},  // Front BR
-
-		{XMFLOAT3{-0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  1.0f,  1.0f,  1.0f}, XMFLOAT2{ 0.0f, 1.0f }},  // Back BL
-		{XMFLOAT3{-0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  0.0f,  1.0f,  1.0f}, XMFLOAT2{ 0.0f, 0.0f }},  // Back TL
-		{XMFLOAT3{ 0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  1.0f,  0.0f,  1.0f}, XMFLOAT2{ 1.0f, 0.0f }},  // Back TR
-		{XMFLOAT3{ 0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  0.0f,  0.0f,  1.0f}, XMFLOAT2{ 1.0f, 1.0f }},  // Back BR
+		//          x,    y,       z,              r,    g,     b,     a,               u,    v,                 nx,       ny,       nz
+		{XMFLOAT3{-0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  0.0f,  0.0f,  1.0f}, XMFLOAT2{ 0.0f, 1.0f }, XMFLOAT3{-0.5773f, -0.5773f, -0.5773f}},  // Front BL
+		{XMFLOAT3{-0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  1.0f,  0.0f,  1.0f}, XMFLOAT2{ 0.0f, 0.0f }, XMFLOAT3{-0.5773f,  0.5773f, -0.5773f}},  // Front TL
+		{XMFLOAT3{ 0.5f,  0.5f, -0.5f}, XMFLOAT4{0.0f,  0.0f,  1.0f,  1.0f}, XMFLOAT2{ 1.0f, 0.0f }, XMFLOAT3{ 0.5773f,  0.5773f, -0.5773f}},  // Front TR
+		{XMFLOAT3{ 0.5f, -0.5f, -0.5f}, XMFLOAT4{1.0f,  1.0f,  1.0f,  1.0f}, XMFLOAT2{ 1.0f, 1.0f }, XMFLOAT3{ 0.5773f, -0.5773f, -0.5773f}},  // Front BR
+																								   
+		{XMFLOAT3{-0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  1.0f,  1.0f,  1.0f}, XMFLOAT2{ 0.0f, 1.0f }, XMFLOAT3{-0.5773f, -0.5773f,  0.5773f}},  // Back BL
+		{XMFLOAT3{-0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  0.0f,  1.0f,  1.0f}, XMFLOAT2{ 0.0f, 0.0f }, XMFLOAT3{-0.5773f,  0.5773f,  0.5773f}},  // Back TL
+		{XMFLOAT3{ 0.5f,  0.5f,  0.5f}, XMFLOAT4{1.0f,  1.0f,  0.0f,  1.0f}, XMFLOAT2{ 1.0f, 0.0f }, XMFLOAT3{ 0.5773f,  0.5773f,  0.5773f}},  // Back TR
+		{XMFLOAT3{ 0.5f, -0.5f,  0.5f}, XMFLOAT4{0.0f,  0.0f,  0.0f,  1.0f}, XMFLOAT2{ 1.0f, 1.0f }, XMFLOAT3{ 0.5773f, -0.5773f,  0.5773f}},  // Back BR
 	};
 
 	const unsigned int indices[] =
@@ -655,4 +736,10 @@ void HandleInput()
 		g_camera.y -= 0.0001f;
 	}
 
+}
+
+void InitScene()
+{
+	pointLights[0] = { XMVECTOR{ 1.5f, 0, -1 }, { 0.9f, 0, 0.85f, 1.0f }, 10.0f, true };
+	pointLights[1] = { XMVECTOR{ -1.5f, 0, -1 }, { 0.0f, 0.9f, 0.85f, 1.0f }, 20.0f, true };
 }
