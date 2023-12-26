@@ -14,6 +14,7 @@
 #include <Keyboard.h>
 
 #include "objfilemodel.h"
+#include <DDSTextureLoader.h>
 
 using namespace DirectX;
 
@@ -57,6 +58,11 @@ ID3D11ShaderResourceView* pSkyboxTexture = NULL;
 ID3D11VertexShader* pSkyboxVS = NULL;
 ID3D11PixelShader* pSkyboxPS = NULL;
 ID3D11InputLayout* pSkyboxLayout = NULL;
+
+struct SkyboxCBuffer
+{
+	XMMATRIX WVP;
+};
 
 #pragma region Object WVP
 
@@ -155,6 +161,11 @@ void	InitScene();
 
 HRESULT LoadVertexShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11VertexShader** vs, ID3D11InputLayout** il);
 HRESULT LoadPixelShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11PixelShader** ps);
+
+HRESULT LoadCompiledVertexShader(LPCWSTR fileName, ID3D11VertexShader** vs, ID3D11InputLayout** il);
+HRESULT LoadCompiledPixelShader(LPCWSTR fileName, ID3D11PixelShader** ps);
+
+void DrawSkybox();
 
 int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE prevInstanceHandle, _In_ LPSTR cmdLine, _In_ int nCmdShow)
 {
@@ -415,10 +426,10 @@ HRESULT InitD3D(HWND hWnd)
 	// Skybox
 	D3D11_RASTERIZER_DESC rasterDesc;
 	ZeroMemory(&rasterDesc, sizeof(D3D11_RASTERIZER_DESC));
-	rasterDesc.FillMode				= D3D11_FILL_SOLID;
-	rasterDesc.CullMode				= D3D11_CULL_FRONT;
-	g_device->CreateRasterizerState(&rasterDesc, &pRasterSolid);
 	rasterDesc.CullMode				= D3D11_CULL_BACK;
+	rasterDesc.FillMode				= D3D11_FILL_SOLID;
+	g_device->CreateRasterizerState(&rasterDesc, &pRasterSolid);
+	rasterDesc.CullMode				= D3D11_CULL_FRONT;
 	g_device->CreateRasterizerState(&rasterDesc, &pRasterSkybox);
 
 	D3D11_DEPTH_STENCIL_DESC depthDesc = { 0 };
@@ -480,6 +491,8 @@ void RenderFrame()
 	// Clear back buffer
 	g_context->ClearRenderTargetView(g_backBuffer, Colors::DarkSlateBlue);
 	g_context->ClearDepthStencilView(g_ZBuffer, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
+
+	DrawSkybox();
 	
 	// Set vertex buffer, index buffer, primitive topology (per mesh)
 	UINT stride = sizeof(Vertex);
@@ -532,11 +545,12 @@ void RenderFrame()
 	model->Draw();
 
 
-	//world = cube2.GetWorldMaxtrix();
-	//cBuffer.WVP = world * view * projection;
-	//g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
-	//g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
+	world = cube2.GetWorldMaxtrix();
+	cBuffer.WVP = world * view * projection;
+	g_context->UpdateSubresource(pCBuffer, 0, 0, &cBuffer, 0, 0);
+	g_context->VSSetConstantBuffers(0, 1, &pCBuffer);
 	//g_context->DrawIndexed(36, 0, 0);
+	model->Draw();
 
 	// Text
 	g_context->OMSetBlendState(pAlphaBlendStateEnable, NULL, 0xffffffff);
@@ -546,13 +560,13 @@ void RenderFrame()
 
 	g_swapChain->Present(0, 0);
 
-	//static float fakeTime = 0;
-	//fakeTime += 0.0001f;
-	//cube1.pos.x = sin(fakeTime);
-	//cube1.pos.y = cos(fakeTime);
+	static float fakeTime = 0;
+	fakeTime += 0.0001f;
+	cube1.pos.x = sin(fakeTime);
+	cube1.pos.y = cos(fakeTime);
 
-	//cube1.rot.x = fakeTime;
-	//cube1.rot.y = fakeTime;
+	cube1.rot.x = fakeTime;
+	cube1.rot.y = fakeTime;
 }
 
 HRESULT InitPipeline()
@@ -570,7 +584,6 @@ HRESULT InitPipeline()
 		g_context->PSSetShader(pPS, 0, 0);
 
 		// Shader reflection
-
 		ID3D11ShaderReflection* vShaderReflection = nullptr;
 		D3DReflect(vertexShaderBytecode.data(), vertexShaderBytecode.size(), IID_ID3D11ShaderReflection, (void**)&vShaderReflection);
 
@@ -636,8 +649,11 @@ HRESULT InitPipeline()
 		delete[] ied;
 	}*/
 
-	LoadVertexShader(L"VertexShader.hlsl", "main", &pVS, &pLayout);
-	LoadPixelShader(L"PixelShader.hlsl", "main", &pPS);
+	LoadCompiledVertexShader(L"CompiledShaders/VertexShader.cso", &pVS, &pLayout);
+	LoadCompiledPixelShader(L"CompiledShaders/PixelShader.cso", &pPS);
+
+	LoadVertexShader(L"SkyboxVShader.hlsl", "main", &pSkyboxVS, &pSkyboxLayout);
+	LoadPixelShader(L"SkyboxPShader.hlsl", "main", &pSkyboxPS);
 	
 	return S_OK;
 }
@@ -708,6 +724,13 @@ void InitGraphics()
 	if (pVBuffer == 0)
 		return;
 
+	cb.ByteWidth = sizeof(SkyboxCBuffer);
+	if (FAILED(g_device->CreateBuffer(&cb, NULL, &pSkyboxCBuffer)))
+	{
+		OutputDebugString(L"Failed to create skybox constant buffer");
+		return;
+	}
+
 	D3D11_MAPPED_SUBRESOURCE ms;
 	g_context->Map(pVBuffer, NULL, D3D11_MAP_WRITE_DISCARD, NULL, &ms);
 	memcpy(ms.pData, vertices, sizeof(vertices));
@@ -715,6 +738,7 @@ void InitGraphics()
 
 	// Texture
 	CreateWICTextureFromFile(g_device, g_context, L"Box.bmp", NULL, &pTexture);
+	CreateDDSTextureFromFile(g_device, L"skybox01.dds", NULL, &pSkyboxTexture);
 
 	// Sampler
 	D3D11_SAMPLER_DESC sampDesc;
@@ -822,7 +846,7 @@ HRESULT LoadVertexShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11VertexShader
 	D3D11_INPUT_ELEMENT_DESC ied[] =
 	{
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT,    0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "COLOUR",	  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR",	  0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT,       0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 		{ "NORMAL",	  0, DXGI_FORMAT_R32G32B32_FLOAT,    0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 	};
@@ -835,9 +859,47 @@ HRESULT LoadVertexShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11VertexShader
 		return result;
 	}
 
-	/*#pragma region Shader reflection
+	return S_OK;
+}
+
+HRESULT LoadPixelShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11PixelShader** ps)
+{
+	HRESULT result;
+	ID3DBlob* PSblob, * errorBlob;
+
+	result = D3DCompileFromFile(fileName, NULL, NULL, entrypoint, "ps_4_0", NULL, NULL, &PSblob, &errorBlob);
+	if (FAILED(result))
+	{
+		OutputDebugStringA(reinterpret_cast<const char*>(errorBlob->GetBufferPointer()));
+		errorBlob->Release();
+		return result;
+	}
+
+	result = g_device->CreatePixelShader(PSblob->GetBufferPointer(), PSblob->GetBufferSize(), NULL, ps);
+	PSblob->Release();
+	if (FAILED(result))
+	{
+		OutputDebugString(L"Failed to create pixel shader");
+		return result;
+	}
+
+	return S_OK;
+}
+
+HRESULT LoadCompiledVertexShader(LPCWSTR fileName, ID3D11VertexShader** vs, ID3D11InputLayout** il)
+{
+	HRESULT result;
+
+	auto VertexBytecode = DX::ReadData(fileName);
+
+	g_device->CreateVertexShader(VertexBytecode.data(), VertexBytecode.size(), NULL, vs);
+
+	g_context->VSSetShader(*vs, 0, 0);
+
+
+#pragma region Shader reflection
 	ID3D11ShaderReflection* vShaderReflection = nullptr;
-	D3DReflect(VSblob->GetBufferPointer(), VSblob->GetBufferSize(), IID_ID3D11ShaderReflection, (void**)&vShaderReflection);
+	D3DReflect(VertexBytecode.data(), VertexBytecode.size(), IID_ID3D11ShaderReflection, (void**)&vShaderReflection);
 
 	D3D11_SHADER_DESC shaderDesc;
 	vShaderReflection->GetDesc(&shaderDesc);
@@ -886,43 +948,77 @@ HRESULT LoadVertexShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11VertexShader
 
 	}
 
-	result = g_device->CreateInputLayout(ied, shaderDesc.InputParameters, VSblob->GetBufferPointer(), VSblob->GetBufferSize(), il);
-	VSblob->Release();
+	
+	result = g_device->CreateInputLayout(ied, shaderDesc.InputParameters, VertexBytecode.data(), VertexBytecode.size(), &pLayout);
 	if (FAILED(result))
 	{
 		OutputDebugString(L"Failed to create input layout");
+		std::cout << "Failed to create input layout\n";
 		return result;
 	}
 	OutputDebugString(L"Successfully created input layout\n");
 
+	g_context->IASetInputLayout(pLayout);
+
 	delete[] paramDesc;
 	delete[] ied;
 
-#pragma endregion*/
+#pragma endregion
 
 	return S_OK;
 }
 
-HRESULT LoadPixelShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11PixelShader** ps)
+HRESULT LoadCompiledPixelShader(LPCWSTR fileName, ID3D11PixelShader** ps)
 {
 	HRESULT result;
-	ID3DBlob* PSblob, * errorBlob;
 
-	result = D3DCompileFromFile(fileName, NULL, NULL, entrypoint, "ps_4_0", NULL, NULL, &PSblob, &errorBlob);
-	if (FAILED(result))
-	{
-		OutputDebugStringA(reinterpret_cast<const char*>(errorBlob->GetBufferPointer()));
-		errorBlob->Release();
-		return result;
-	}
+	auto PixelBytecode = DX::ReadData(fileName);
 
-	result = g_device->CreatePixelShader(PSblob->GetBufferPointer(), PSblob->GetBufferSize(), NULL, ps);
-	PSblob->Release();
+	result = g_device->CreatePixelShader(PixelBytecode.data(), PixelBytecode.size(), NULL, ps);
 	if (FAILED(result))
 	{
 		OutputDebugString(L"Failed to create pixel shader");
 		return result;
 	}
 
+	g_context->PSSetShader(*ps, 0, 0);
+
 	return S_OK;
+}
+
+void DrawSkybox()
+{
+	// Front-face culling and disable depth writing
+	g_context->OMSetDepthStencilState(pDepthWriteSkybox, 1);
+	g_context->RSSetState(pRasterSkybox);
+
+	// Set skybox shaders
+	g_context->VSSetShader(pSkyboxVS, 0, 0);
+	g_context->PSSetShader(pSkyboxPS, 0, 0);
+	g_context->IASetInputLayout(pSkyboxLayout);
+
+	// Constant buffer data
+	SkyboxCBuffer cBuffer;
+	XMMATRIX translation, projection, view;
+	translation = XMMatrixTranslation(g_camera.x, g_camera.y, g_camera.z);
+	projection = XMMatrixPerspectiveFovLH(XMConvertToRadians(60), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.0f);
+	view = g_camera.GetViewMatrix();
+	cBuffer.WVP = translation * view * projection;
+	g_context->UpdateSubresource(pSkyboxCBuffer, 0, 0, &cBuffer, 0, 0);
+
+	// Set shader resources
+	g_context->VSSetConstantBuffers(0, 1, &pSkyboxCBuffer);
+	g_context->PSSetSamplers(0, 1, &pSampler);
+	g_context->PSSetShaderResources(0, 1, &pSkyboxTexture);
+
+	model->Draw();
+
+	// Reset depth writing and culling
+	g_context->OMSetDepthStencilState(pDepthWriteSolid, 1);
+	g_context->RSSetState(pRasterSolid);
+
+	// Reset shaders
+	g_context->VSSetShader(pVS, 0, 0);
+	g_context->PSSetShader(pPS, 0, 0);
+	g_context->IASetInputLayout(pLayout);
 }

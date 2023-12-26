@@ -12,6 +12,12 @@
     <ContentFile>
       <FullPath>C:\Users\prodi\source\repos\AGP\Win32 Intro\Win32 Intro\CompiledShaders\VertexShader.cso</FullPath>
     </ContentFile>
+    <ContentFile>
+      <FullPath>C:\Users\prodi\source\repos\AGP\Win32 Intro\x64\Debug\SkyboxPShader.cso</FullPath>
+    </ContentFile>
+    <ContentFile>
+      <FullPath>C:\Users\prodi\source\repos\AGP\Win32 Intro\x64\Debug\SkyboxVShader.cso</FullPath>
+    </ContentFile>
   </ContentFiles>
   <SatelliteDlls />
   <NonRecipeFileRefs />

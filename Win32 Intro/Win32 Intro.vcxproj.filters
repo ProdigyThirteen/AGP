@@ -24,6 +24,9 @@
     <ClCompile Include="objfilemodel.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="Something.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="PixelShader.hlsl">
@@ -35,6 +38,8 @@
     <FxCompile Include="..\..\..\..\..\Downloads\text2D_shaders.hlsl">
       <Filter>Source Files</Filter>
     </FxCompile>
+    <FxCompile Include="SkyboxVShader.hlsl" />
+    <FxCompile Include="SkyboxPShader.hlsl" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ReadData.h">
