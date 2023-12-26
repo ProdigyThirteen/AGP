@@ -136,10 +136,12 @@ PointLight pointLights[MAX_POINT_LIGHTS];
 
 // Object loading
 ObjFileModel* model;
+ObjFileModel* skybox;
 
 struct CBUFFER0
 {
 	XMMATRIX WVP;
+	XMMATRIX WV;
 	XMVECTOR ambientLightColour;
 	XMVECTOR directionalLightDir;
 	XMVECTOR directionalLightCol;
@@ -462,6 +464,7 @@ void CleanD3D()
 	if (pPS)					 pPS->Release();
 	delete pText;
 	delete model;
+	delete skybox;
 
 	// Skybox
 	if (pRasterSolid) pRasterSolid->Release();
@@ -504,6 +507,7 @@ void RenderFrame()
 	// Set texture and sampler
 	g_context->PSSetSamplers(0, 1, &pSampler);
 	g_context->PSSetShaderResources(0, 1, &pTexture);
+	g_context->PSSetShaderResources(1, 1, &pSkyboxTexture);
 
 	// View and projection matrices
 	XMMATRIX world;// = cube1.GetWorldMaxtrix();
@@ -515,6 +519,7 @@ void RenderFrame()
 	world = cube1.GetWorldMaxtrix();
 	CBUFFER0 cBuffer;
 	cBuffer.WVP = world * view * projection;
+	cBuffer.WV = world * view;
 
 	// Lighting
 	cBuffer.ambientLightColour = ambientLightColour;
@@ -651,6 +656,9 @@ HRESULT InitPipeline()
 
 	LoadCompiledVertexShader(L"CompiledShaders/VertexShader.cso", &pVS, &pLayout);
 	LoadCompiledPixelShader(L"CompiledShaders/PixelShader.cso", &pPS);
+
+	LoadVertexShader(L"ReflectiveVShader.hlsl", "main", &pVS, &pLayout);
+	LoadPixelShader(L"ReflectivePShader.hlsl", "main", &pPS);
 
 	LoadVertexShader(L"SkyboxVShader.hlsl", "main", &pSkyboxVS, &pSkyboxLayout);
 	LoadPixelShader(L"SkyboxPShader.hlsl", "main", &pSkyboxPS);
@@ -820,7 +828,8 @@ void InitScene()
 	pointLights[0] = { XMVECTOR{ 1.5f, 0, -1 }, { 0.9f, 0, 0.85f, 1.0f }, 10.0f, true };
 	pointLights[1] = { XMVECTOR{ -1.5f, 0, -1 }, { 0.0f, 0.9f, 0.85f, 1.0f }, 20.0f, true };
 
-	model = new ObjFileModel((char*)"cube.obj", g_device, g_context);
+	model = new ObjFileModel((char*)"Sphere.obj", g_device, g_context);
+	skybox = new ObjFileModel((char*)"cube.obj", g_device, g_context);
 }
 
 HRESULT LoadVertexShader(LPCWSTR fileName, LPCSTR entrypoint, ID3D11VertexShader** vs, ID3D11InputLayout** il)
@@ -1011,7 +1020,7 @@ void DrawSkybox()
 	g_context->PSSetSamplers(0, 1, &pSampler);
 	g_context->PSSetShaderResources(0, 1, &pSkyboxTexture);
 
-	model->Draw();
+	skybox->Draw();
 
 	// Reset depth writing and culling
 	g_context->OMSetDepthStencilState(pDepthWriteSolid, 1);

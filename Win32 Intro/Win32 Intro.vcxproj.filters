@@ -40,6 +40,12 @@
     </FxCompile>
     <FxCompile Include="SkyboxVShader.hlsl" />
     <FxCompile Include="SkyboxPShader.hlsl" />
+    <FxCompile Include="ReflectivePShader.hlsl">
+      <Filter>Source Files</Filter>
+    </FxCompile>
+    <FxCompile Include="ReflectiveVShader.hlsl">
+      <Filter>Source Files</Filter>
+    </FxCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ReadData.h">
